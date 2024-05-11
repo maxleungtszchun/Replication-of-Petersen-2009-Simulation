@@ -13,7 +13,7 @@ gen_long_data <- function (N, T, var_gamma_i, var_mu_i, fe = "individual") {
   d <- tibble(.rows = N) %>% mutate(i = seq_len(N))
   d["gamma_i"] <- rnorm(N, mean = 0, sd = sqrt(var_gamma_i))
   d["mu_i"] <- rnorm(N, mean = 0, sd = sqrt(var_mu_i))
-  
+
   gen_wide_data_i_eff <- function (df) {
     var_eta_it <- 4 - var_gamma_i
     var_upsilon_it <- 1 - var_mu_i
@@ -26,71 +26,74 @@ gen_long_data <- function (N, T, var_gamma_i, var_mu_i, fe = "individual") {
     }
     return(df)
   }
-  
+
   gen_wide_data_t_eff <- function (df) {
     var_delta_t <- var_gamma_i
     var_zeta_t <- var_mu_i
-    
+
     var_eta_it <- 4 - var_delta_t
     var_upsilon_it <- 1 - var_zeta_t
     for (t in seq_len(T)) {
       df[str_c("eta_i", t)] <- rnorm(N, mean = 0, sd = sqrt(var_eta_it))
-      df[str_c("varepsilon_i", t)] <- rnorm(1, mean = 0, sd = sqrt(var_delta_t)) +
-                                        df[[str_c("eta_i", t)]]
+      df[str_c("varepsilon_i", t)] <- rnorm(1, mean = 0, sd = sqrt(var_delta_t)) + df[[str_c("eta_i", t)]]
       df[str_c("upsilon_i", t)] <- rnorm(N, mean = 0, sd = sqrt(var_upsilon_it))
-      df[str_c("x_i", t)] <- rnorm(1, mean = 0, sd = sqrt(var_zeta_t)) +
-                              df[[str_c("upsilon_i", t)]]
+      df[str_c("x_i", t)] <- rnorm(1, mean = 0, sd = sqrt(var_zeta_t)) + df[[str_c("upsilon_i", t)]]
       df[str_c("y_i", t)] <- df[[str_c("x_i", t)]] * 1 + df[[str_c("varepsilon_i", t)]]
     }
     return(df)
   }
- 
+
   gen_wide_data_it_eff <- function (df) {
     var_delta_t <- var_gamma_i
     var_zeta_t <- var_mu_i
-    
+
     var_eta_it <- var_gamma_i
     var_upsilon_it <- var_mu_i
     for (t in seq_len(T)) {
       df[str_c("eta_i", t)] <- rnorm(N, mean = 0, sd = sqrt(var_eta_it))
-      df[str_c("varepsilon_i", t)] <- df[["gamma_i"]] +
-                                      rnorm(1, mean = 0, sd = sqrt(var_delta_t)) +
-                                      df[[str_c("eta_i", t)]]
+      df[str_c("varepsilon_i", t)] <-
+        df[["gamma_i"]] + rnorm(1, mean = 0, sd = sqrt(var_delta_t)) + df[[str_c("eta_i", t)]]
       df[str_c("upsilon_i", t)] <- rnorm(N, mean = 0, sd = sqrt(var_upsilon_it))
-      df[str_c("x_i", t)] <- df[["mu_i"]] +
-                              rnorm(1, mean = 0, sd = sqrt(var_zeta_t)) +
-                              df[[str_c("upsilon_i", t)]]
+      df[str_c("x_i", t)] <-
+        df[["mu_i"]] + rnorm(1, mean = 0, sd = sqrt(var_zeta_t)) + df[[str_c("upsilon_i", t)]]
       df[str_c("y_i", t)] <- df[[str_c("x_i", t)]] * 1 + df[[str_c("varepsilon_i", t)]]
     }
     return(df)
   }
-  
-  wide_data <- 
-    switch(fe,
-           individual = gen_wide_data_i_eff(d),
-           time = gen_wide_data_t_eff(d),
-           both = gen_wide_data_it_eff(d),
-           stop("only individual or time or both fe"))
+
+  wide_data <-
+    switch(
+      fe,
+      individual = gen_wide_data_i_eff(d),
+      time = gen_wide_data_t_eff(d),
+      both = gen_wide_data_it_eff(d),
+      stop("only individual or time or both fe")
+    )
+
   long_data <-
     wide_data %>%
-    pivot_longer(cols = starts_with(c("y_i","x_i", "varepsilon_i",
-                                      "eta_i", "upsilon_i")),
-                 names_to = c(".value", "t"),
-                 names_sep = "_i")
+    pivot_longer(
+      cols = starts_with(c("y_i","x_i", "varepsilon_i", "eta_i", "upsilon_i")),
+      names_to = c(".value", "t"),
+      names_sep = "_i"
+    )
+
   return(long_data)
 }
 
 simulation <- function (N, T, var_gamma_i, var_mu_i, sim_num, fe = "individual") {
-  getResults <- function() {
-    long_data <- 
-      gen_long_data(N = N,
-                    T = T,
-                    var_gamma_i = var_gamma_i,
-                    var_mu_i = var_mu_i,
-                    fe = fe) %>%
+  get_results <- function () {
+    long_data <-
+      gen_long_data(
+        N = N,
+        T = T,
+        var_gamma_i = var_gamma_i,
+        var_mu_i = var_mu_i,
+        fe = fe
+      ) %>%
       mutate(t = as.numeric(t))
     long_data_plm <- pdata.frame(long_data, index = c("i", "t"))
-    
+
     pooled_ols <- plm(y ~ x + 0, model = "pooling", data = long_data_plm)
     ols <- lm(y ~ x + 0, data = long_data) # for calculating White's S.E. later by using sandwich::vcovHC()
     pooled_ols_coef_default_se <- coeftest(pooled_ols)
@@ -101,14 +104,16 @@ simulation <- function (N, T, var_gamma_i, var_mu_i, sim_num, fe = "individual")
     # plm::vcovHC() =/= sandwich::vcovHC()
     clustered_both_var <- clustered_i_var + clustered_t_var - sandwich::vcovHC(ols, type = "HC1")
     pooled_ols_coef_clustered_se_both <- coeftest(pooled_ols, vcov = clustered_both_var)
-    
+
     pooled_ols_coef_clustered_se <-
-      switch(fe,
-             individual = pooled_ols_coef_clustered_se_i,
-             time = pooled_ols_coef_clustered_se_t,
-             both = pooled_ols_coef_clustered_se_both,
-             stop("only individual or time or both fe"))
-    
+      switch(
+        fe,
+        individual = pooled_ols_coef_clustered_se_i,
+        time = pooled_ols_coef_clustered_se_t,
+        both = pooled_ols_coef_clustered_se_both,
+        stop("only individual or time or both fe")
+      )
+
     cs_betas <- list()
     for (j in seq_len(T)) {
       cs_betas[[j]] <-
@@ -122,57 +127,56 @@ simulation <- function (N, T, var_gamma_i, var_mu_i, sim_num, fe = "individual")
     cs_betas <- as.numeric(cs_betas)
     fm_beta <- mean(cs_betas, na.rm = TRUE)
     fm_se <- sqrt(var(cs_betas, na.rm = TRUE) / T)
-    
-    return(list("default" = pooled_ols_coef_default_se,
-                "clustered" = pooled_ols_coef_clustered_se,
-                "fm_beta" = fm_beta,
-                "fm_se" = fm_se,
-                "fm_t" = (fm_beta - 1) / fm_se))
+
+    return(list(
+      "default" = pooled_ols_coef_default_se,
+      "clustered" = pooled_ols_coef_clustered_se,
+      "fm_beta" = fm_beta,
+      "fm_se" = fm_se,
+      "fm_t" = (fm_beta - 1) / fm_se
+    ))
   }
-  
+
   if (Sys.info()["sysname"] == "Windows") {
     results <- list()
     for (i in seq_len(sim_num)) {
-      results[[i]] <- getResults()
+      results[[i]] <- get_results()
     }
   } else {
     # using all CPUs in non-Windows OS e.g. MacOS
     registerDoParallel(detectCores())
     results <-
       foreach (i = seq_len(sim_num)) %dopar% {
-        getResults()
+        get_results()
       }
     stopImplicitCluster()
   }
-  
+
   return(results)
 }
 
 get_sim_table <- function (N, T, var_gamma_i, var_mu_i, sim_num, fe = "individual") {
-  sim_data <- simulation(N = N,
-                         T = T,
-                         var_gamma_i = var_gamma_i,
-                         var_mu_i = var_mu_i,
-                         sim_num = sim_num,
-                         fe = fe)
-  
+  sim_data <-
+    simulation(
+      N = N,
+      T = T,
+      var_gamma_i = var_gamma_i,
+      var_mu_i = var_mu_i,
+      sim_num = sim_num,
+      fe = fe
+    )
+
   t_default <- map_dbl(sim_data, ~ .x$default[1,"t value"] - 1 / .x$default[1,"Std. Error"])
   t_cluster <- map_dbl(sim_data, ~ .x$clustered[1,"t value"] - 1 / .x$clustered[1,"Std. Error"])
   t_fm <- map_dbl(sim_data, ~ .x$fm_t)
-  
+
   per_sig_t_ols <- mean(as.numeric(abs(t_default) > 2.58), na.rm = TRUE)
   per_sig_t_c <- mean(as.numeric(abs(t_cluster) > 2.58), na.rm = TRUE)
   per_sig_t_fm <- mean(as.numeric(abs(t_fm) > 2.58), na.rm = TRUE)
 
   if (var_gamma_i == 2 & var_mu_i == 0.5) {
     plotHist <- function (d, title) {
-      # dev.new()
       hist(d, prob = TRUE, xlim = c(-5, 5), ylim = c(0, 1), main = title, col = "orange", "border" = "white")
-      # xfit <- seq(min(d, na.rm = TRUE), max(d, na.rm = TRUE), length = 200)
-      # yfit <- dnorm(xfit,
-      #               mean = mean(d, na.rm = TRUE),
-      #               sd = sd(d, na.rm = TRUE))
-      # lines(xfit, yfit, col = "red")
     }
     plotHist(t_default, "Density of simulated t with default standard error")
     plotHist(t_cluster, "Density of simulated t with clustered standard error")
@@ -180,16 +184,18 @@ get_sim_table <- function (N, T, var_gamma_i, var_mu_i, sim_num, fe = "individua
   }
 
   simulated_pooled_ols_betas <- map_dbl(sim_data, ~ .x$default[ ,"Estimate"])
-  return(list("avg_beta_ols" = mean(simulated_pooled_ols_betas, na.rm = TRUE),
-              "std_beta_ols" = sd(simulated_pooled_ols_betas, na.rm = TRUE),
-              "avg_se_ols" = mean(map_dbl(sim_data, ~ .x$default[ ,"Std. Error"]), na.rm = TRUE),
-              "per_sig_t_ols" = per_sig_t_ols,
-              "avg_se_c" = mean(map_dbl(sim_data, ~ .x$cluster[ ,"Std. Error"]), na.rm = TRUE),
-              "per_sig_t_c" = per_sig_t_c,
-              "avg_beta_fm" = mean(map_dbl(sim_data, ~ .x$fm_beta), na.rm = TRUE),
-              "std_beta_fm" = sd(map_dbl(sim_data, ~ .x$fm_beta), na.rm = TRUE),
-              "avg_se_fm" = mean(map_dbl(sim_data, ~ .x$fm_se), na.rm = TRUE),
-              "per_sig_t_fm" = per_sig_t_fm))
+  return(list(
+    "avg_beta_ols" = mean(simulated_pooled_ols_betas, na.rm = TRUE),
+    "std_beta_ols" = sd(simulated_pooled_ols_betas, na.rm = TRUE),
+    "avg_se_ols" = mean(map_dbl(sim_data, ~ .x$default[ ,"Std. Error"]), na.rm = TRUE),
+    "per_sig_t_ols" = per_sig_t_ols,
+    "avg_se_c" = mean(map_dbl(sim_data, ~ .x$cluster[ ,"Std. Error"]), na.rm = TRUE),
+    "per_sig_t_c" = per_sig_t_c,
+    "avg_beta_fm" = mean(map_dbl(sim_data, ~ .x$fm_beta), na.rm = TRUE),
+    "std_beta_fm" = sd(map_dbl(sim_data, ~ .x$fm_beta), na.rm = TRUE),
+    "avg_se_fm" = mean(map_dbl(sim_data, ~ .x$fm_se), na.rm = TRUE),
+    "per_sig_t_fm" = per_sig_t_fm
+  ))
 }
 
 # Var(varepsilon_it) = 4
@@ -197,23 +203,25 @@ get_sim_table <- function (N, T, var_gamma_i, var_mu_i, sim_num, fe = "individua
 sim_num <- 500
 N <- 500
 T <- 10
-var_gamma_var_mu_list <- 
-  list(list(0, 0),
-       list(0, 0.25),
-       list(0, 0.5),
-       list(0, 0.75),
-       list(1, 0),
-       list(1, 0.25),
-       list(1, 0.5),
-       list(1, 0.75),
-       list(2, 0),
-       list(2, 0.25),
-       list(2, 0.5),
-       list(2, 0.75),
-       list(3, 0),
-       list(3, 0.25),
-       list(3, 0.5),
-       list(3, 0.75))
+var_gamma_var_mu_list <-
+  list(
+    list(0, 0),
+    list(0, 0.25),
+    list(0, 0.5),
+    list(0, 0.75),
+    list(1, 0),
+    list(1, 0.25),
+    list(1, 0.5),
+    list(1, 0.75),
+    list(2, 0),
+    list(2, 0.25),
+    list(2, 0.5),
+    list(2, 0.75),
+    list(3, 0),
+    list(3, 0.25),
+    list(3, 0.5),
+    list(3, 0.75)
+  )
 
 start_time <- Sys.time()
 sim_table_i <-
@@ -245,5 +253,3 @@ sim_table_both <-
   t()
 View(sim_table_both)
 Sys.time() - start_time
-
-
